@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from sqlalchemy.orm import Session
 
 from app.db.base import get_db
@@ -20,70 +20,62 @@ def get_candidate(current_user):
     return current_user.candidate
 
 
-@router.post("/candidates/me/resume")
-def upload_candidate_resume(
-    file: UploadFile = File(...),
+@router.post("/upload")
+def upload_files(
+    application_id: int | None = Form(default=None),
+    resume: UploadFile | None = File(default=None),
+    profile_photo: UploadFile | None = File(default=None),
+    application_resume: UploadFile | None = File(default=None),
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
     candidate = get_candidate(current_user)
-    folder = f"users/{current_user.id}/candidate/resume"
-    file_path = s3_service.upload_file(file, folder)
-    file_repository.save_candidate_resume(db, candidate, file_path)
+    uploaded_files = {}
 
-    return {
-        "file_path": file_path,
-        "download_url": s3_service.get_file_url(file_path),
-    }
+    if resume:
+        folder = f"users/{current_user.id}/candidate/resume"
+        file_path = s3_service.upload_file(resume, folder)
+        file_repository.save_candidate_resume(db, candidate, file_path)
+        uploaded_files["resume"] = file_path
 
+    if profile_photo:
+        folder = f"users/{current_user.id}/candidate/profile-photo"
+        file_path = s3_service.upload_file(profile_photo, folder)
+        file_repository.save_candidate_profile_photo(db, candidate, file_path)
+        uploaded_files["profile_photo"] = file_path
 
-@router.post("/candidates/me/profile-photo")
-def upload_candidate_profile_photo(
-    file: UploadFile = File(...),
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
-):
-    candidate = get_candidate(current_user)
-    folder = f"users/{current_user.id}/candidate/profile-photo"
-    file_path = s3_service.upload_file(file, folder)
-    file_repository.save_candidate_profile_photo(db, candidate, file_path)
+    if application_resume:
+        if application_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="application_id is required for application resume",
+            )
 
-    return {
-        "file_path": file_path,
-        "download_url": s3_service.get_file_url(file_path),
-    }
+        application = application_repository.get_application_by_id(db, application_id)
+        if application is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Application not found",
+            )
 
+        if application.candidate_id != candidate.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You can upload resume only for your own application",
+            )
 
-@router.post("/applications/{application_id}/resume")
-def upload_application_resume(
-    application_id: int,
-    file: UploadFile = File(...),
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
-):
-    candidate = get_candidate(current_user)
-    application = application_repository.get_application_by_id(db, application_id)
+        folder = f"users/{current_user.id}/applications/{application_id}/resume"
+        file_path = s3_service.upload_file(application_resume, folder)
+        file_repository.save_application_resume(db, application, file_path)
+        uploaded_files["application_resume"] = file_path
 
-    if application is None:
+    if not uploaded_files:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Application not found",
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Upload at least one file",
         )
 
-    if application.candidate_id != candidate.id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You can upload resume only for your own application",
-        )
-
-    folder = f"users/{current_user.id}/applications/{application_id}/resume"
-    file_path = s3_service.upload_file(file, folder)
-    file_repository.save_application_resume(db, application, file_path)
-
-    return {
-        "file_path": file_path,
-        "download_url": s3_service.get_file_url(file_path),
-    }
+    return {"uploaded_files": uploaded_files}
 
 
 @router.get("/download")
