@@ -1,0 +1,16 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+*.zip
+*.log
+
+# Virtual environments
+.venv
+.env
+*.db
+private_key.pem
+public_key.pem
